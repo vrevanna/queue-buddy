@@ -46,9 +46,10 @@ Deno.serve(async (req) => {
     const formData = await req.formData();
     const from = formData.get("From") as string; // e.g., "whatsapp:+919876543210"
     const body = (formData.get("Body") as string || "").trim().toUpperCase();
-    const patientPhone = from.replace("whatsapp:", "");
+    // Clean the phone number - remove "whatsapp:" prefix and any extra spaces, keep the +
+    const patientPhone = from.replace(/^whatsapp:\s*/i, "").trim();
 
-    console.log(`Received message from ${patientPhone}: ${body}`);
+    console.log(`Received message from ${patientPhone}: ${body}`, { rawFrom: from });
 
     // Get doctor settings
     const { data: settings } = await supabase
