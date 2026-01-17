@@ -138,6 +138,16 @@ export function useCallNextPatient() {
         .update({ current_token_number: waitingTokens[0].token_number })
         .eq('queue_date', today);
       
+      // Trigger WhatsApp alerts for next patients in queue
+      try {
+        await supabase.functions.invoke('send-alert', {
+          body: { currentTokenNumber: waitingTokens[0].token_number },
+        });
+      } catch (alertError) {
+        console.error('Failed to send WhatsApp alerts:', alertError);
+        // Don't fail the main operation if alerts fail
+      }
+      
       return data;
     },
     onSuccess: (data) => {
