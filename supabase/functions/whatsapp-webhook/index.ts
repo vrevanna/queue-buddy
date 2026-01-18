@@ -92,7 +92,16 @@ Deno.serve(async (req) => {
       return response.json();
     }
 
-    // Check if within doctor hours
+    // Helper to format time from HH:MM:SS to 12-hour format
+    function formatTime(time: string): string {
+      const [hours, minutes] = time.split(':');
+      const hour = parseInt(hours);
+      const ampm = hour >= 12 ? 'PM' : 'AM';
+      const displayHour = hour % 12 || 12;
+      return `${displayHour}:${minutes} ${ampm}`;
+    }
+
+    // Check if within doctor hours (single continuous slot: start_time_morning to end_time_morning)
     function isWithinDoctorHours(): { available: boolean; message: string; closingSoon: boolean } {
       if (!settings || !settings.is_active) {
         return { 
@@ -105,27 +114,22 @@ Deno.serve(async (req) => {
       const now = new Date();
       const currentTime = now.toTimeString().slice(0, 5); // HH:MM format
 
-      const morningStart = settings.start_time_morning;
-      const morningEnd = settings.end_time_morning;
-      const eveningStart = settings.start_time_evening;
-      const eveningEnd = settings.end_time_evening;
+      // Using single continuous slot from start_time_morning to end_time_morning
+      const startTime = settings.start_time_morning;
+      const endTime = settings.end_time_morning;
 
-      // Check morning slot
-      const inMorning = currentTime >= morningStart && currentTime <= morningEnd;
-      // Check evening slot
-      const inEvening = currentTime >= eveningStart && currentTime <= eveningEnd;
+      const isWithinHours = currentTime >= startTime && currentTime <= endTime;
 
-      if (!inMorning && !inEvening) {
+      if (!isWithinHours) {
         return {
           available: false,
-          message: `❌ Tokens are not being issued now.\n\n🕒 Doctor is available:\n• Morning: ${morningStart} - ${morningEnd}\n• Evening: ${eveningStart} - ${eveningEnd}`,
+          message: `❌ Tokens are not being issued now.\n\n🕒 Doctor is available:\n${formatTime(startTime)} - ${formatTime(endTime)}`,
           closingSoon: false,
         };
       }
 
       // Check if within last 10 minutes of session
-      const currentEnd = inMorning ? morningEnd : eveningEnd;
-      const endParts = currentEnd.split(":").map(Number);
+      const endParts = endTime.split(":").map(Number);
       const currentParts = currentTime.split(":").map(Number);
       
       const endMinutes = endParts[0] * 60 + endParts[1];
@@ -135,7 +139,7 @@ Deno.serve(async (req) => {
       if (minutesUntilClose <= 10) {
         return {
           available: false,
-          message: "⚠️ Token issuance closed for this session.\nPlease try again in the next available slot.",
+          message: "⚠️ Token issuance closed for this session.\nPlease try again later.",
           closingSoon: true,
         };
       }
@@ -265,7 +269,7 @@ Deno.serve(async (req) => {
     // Menu options
     else if (body === "1" || body === "TIMINGS" || body === "DOCTOR TIMINGS") {
       if (settings) {
-        responseMessage = `🕒 *Doctor Timings*\n\n📍 ${settings.clinic_name}\n\n• Morning: ${settings.start_time_morning} - ${settings.end_time_morning}\n• Evening: ${settings.start_time_evening} - ${settings.end_time_evening}\n\n📋 Average consultation: ~${settings.avg_consultation_time} mins`;
+        responseMessage = `🕒 *Doctor Timings*\n\n📍 ${settings.clinic_name}\n\n${formatTime(settings.start_time_morning)} - ${formatTime(settings.end_time_morning)}\n\n📋 Average consultation: ~${settings.avg_consultation_time} mins`;
       } else {
         responseMessage = "Doctor timings are not configured yet. Please contact the clinic.";
       }
