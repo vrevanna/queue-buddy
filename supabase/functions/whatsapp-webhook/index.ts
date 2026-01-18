@@ -64,6 +64,9 @@ Deno.serve(async (req) => {
     async function sendWhatsAppMessage(to: string, message: string) {
       const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioAccountSid}/Messages.json`;
       
+      const fromNumber = twilioPhoneNumber!.startsWith('whatsapp:') ? twilioPhoneNumber! : `whatsapp:${twilioPhoneNumber}`;
+      const toNumber = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
+      
       const response = await fetch(twilioUrl, {
         method: "POST",
         headers: {
@@ -71,8 +74,8 @@ Deno.serve(async (req) => {
           "Content-Type": "application/x-www-form-urlencoded",
         },
         body: new URLSearchParams({
-          From: `whatsapp:${twilioPhoneNumber}`,
-          To: `whatsapp:${to}`,
+          From: fromNumber,
+          To: toNumber,
           Body: message,
         }),
       });
