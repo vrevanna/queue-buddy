@@ -64,8 +64,11 @@ Deno.serve(async (req) => {
     async function sendWhatsAppMessage(to: string, message: string) {
       const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioAccountSid}/Messages.json`;
       
-      const fromNumber = twilioPhoneNumber!.startsWith('whatsapp:') ? twilioPhoneNumber! : `whatsapp:${twilioPhoneNumber}`;
-      const toNumber = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
+      // Strip any existing whatsapp: prefix and re-add it cleanly
+      const cleanFromNumber = twilioPhoneNumber!.replace(/^whatsapp:/, '');
+      const cleanToNumber = to.replace(/^whatsapp:/, '');
+      const fromNumber = `whatsapp:${cleanFromNumber}`;
+      const toNumber = `whatsapp:${cleanToNumber}`;
       
       const response = await fetch(twilioUrl, {
         method: "POST",
