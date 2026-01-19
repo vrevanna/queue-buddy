@@ -38,6 +38,46 @@ export function useDoctorSettings() {
   });
 }
 
+export function useUpdateDoctorSettings() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (updates: {
+      clinic_name?: string;
+      start_time_morning?: string;
+      end_time_morning?: string;
+      start_time_evening?: string;
+      end_time_evening?: string;
+      avg_consultation_time?: number;
+      is_active?: boolean;
+    }) => {
+      const { data, error } = await supabase
+        .from('doctor_settings')
+        .update(updates)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['doctor-settings'] });
+      toast({
+        title: 'Settings Updated',
+        description: 'Clinic settings have been saved successfully.',
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: 'Error',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+}
+
 export function useQueueState() {
   const today = new Date().toISOString().split('T')[0];
   

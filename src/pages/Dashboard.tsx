@@ -2,7 +2,7 @@ import { DashboardHeader } from '@/components/layout/DashboardHeader';
 import { CurrentTokenDisplay } from '@/components/queue/CurrentTokenDisplay';
 import { TokenTable } from '@/components/queue/TokenTable';
 import { QueueControls } from '@/components/queue/QueueControls';
-import { DoctorSettingsCard } from '@/components/queue/DoctorSettingsCard';
+import { DoctorSettingsEditor } from '@/components/queue/DoctorSettingsEditor';
 import { CompletedTokensList } from '@/components/queue/CompletedTokensList';
 import { useRealtimeTokens } from '@/hooks/useQueue';
 
@@ -35,7 +35,7 @@ export default function Dashboard() {
           
           {/* Sidebar */}
           <div className="space-y-6">
-            <DoctorSettingsCard />
+            <DoctorSettingsEditor />
             <CompletedTokensList />
           </div>
         </div>
