@@ -38,7 +38,9 @@ export function DoctorSettingsEditor() {
   };
 
   const handleSave = () => {
+    if (!settings) return;
     updateSettings.mutate({
+      id: settings.id,
       clinic_name: formData.clinic_name,
       start_time_morning: formData.start_time + ':00',
       end_time_morning: formData.end_time + ':00',
