@@ -115,8 +115,11 @@ Deno.serve(async (req) => {
       const currentTime = now.toTimeString().slice(0, 5); // HH:MM format
 
       // Using single continuous slot from start_time_morning to end_time_morning
-      const startTime = settings.start_time_morning;
-      const endTime = settings.end_time_morning;
+      // Normalize DB times to HH:MM format (they come as HH:MM:SS)
+      const startTime = settings.start_time_morning.slice(0, 5);
+      const endTime = settings.end_time_morning.slice(0, 5);
+
+      console.log(`Time check - Current: ${currentTime}, Start: ${startTime}, End: ${endTime}`);
 
       const isWithinHours = currentTime >= startTime && currentTime <= endTime;
 
@@ -269,7 +272,9 @@ Deno.serve(async (req) => {
     // Menu options
     else if (body === "1" || body === "TIMINGS" || body === "DOCTOR TIMINGS") {
       if (settings) {
-        responseMessage = `🕒 *Doctor Timings*\n\n📍 ${settings.clinic_name}\n\n${formatTime(settings.start_time_morning)} - ${formatTime(settings.end_time_morning)}\n\n📋 Average consultation: ~${settings.avg_consultation_time} mins`;
+        const openTime = formatTime(settings.start_time_morning.slice(0, 5));
+        const closeTime = formatTime(settings.end_time_morning.slice(0, 5));
+        responseMessage = `🕒 *Doctor Timings*\n\n📍 ${settings.clinic_name}\n\n${openTime} - ${closeTime}\n\n📋 Average consultation: ~${settings.avg_consultation_time} mins`;
       } else {
         responseMessage = "Doctor timings are not configured yet. Please contact the clinic.";
       }
