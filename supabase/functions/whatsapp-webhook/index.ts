@@ -5,13 +5,26 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-interface ConversationState {
-  step: "MENU" | "AWAITING_NAME";
-  phone: string;
+// IST timezone offset: UTC+5:30
+function getISTDate(): Date {
+  const now = new Date();
+  // IST is UTC+5:30
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const utcTime = now.getTime() + (now.getTimezoneOffset() * 60 * 1000);
+  return new Date(utcTime + istOffset);
 }
 
-// In-memory conversation state (for simple state management)
-const conversations = new Map<string, ConversationState>();
+function getISTDateString(): string {
+  const ist = getISTDate();
+  return ist.toISOString().split("T")[0];
+}
+
+function getISTTimeString(): string {
+  const ist = getISTDate();
+  const hours = ist.getHours().toString().padStart(2, '0');
+  const minutes = ist.getMinutes().toString().padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
 
 Deno.serve(async (req) => {
   // Handle CORS preflight
@@ -44,12 +57,14 @@ Deno.serve(async (req) => {
 
     // Parse incoming WhatsApp message from Twilio
     const formData = await req.formData();
-    const from = formData.get("From") as string; // e.g., "whatsapp:+919876543210"
-    const body = (formData.get("Body") as string || "").trim().toUpperCase();
+    const from = formData.get("From") as string;
+    const rawBody = (formData.get("Body") as string || "").trim();
+    const body = rawBody.toUpperCase();
+    
     // Clean the phone number - remove "whatsapp:" prefix and any extra spaces, keep the +
     const patientPhone = from.replace(/^whatsapp:\s*/i, "").trim();
 
-    console.log(`Received message from ${patientPhone}: ${body}`, { rawFrom: from });
+    console.log(`Received message from ${patientPhone}: ${rawBody}`, { rawFrom: from });
 
     // Get doctor settings
     const { data: settings } = await supabase
@@ -58,13 +73,12 @@ Deno.serve(async (req) => {
       .limit(1)
       .single();
 
-    const today = new Date().toISOString().split("T")[0];
+    const today = getISTDateString();
 
     // Helper function to send WhatsApp message via Twilio
     async function sendWhatsAppMessage(to: string, message: string) {
       const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioAccountSid}/Messages.json`;
       
-      // Strip any existing whatsapp: prefix and re-add it cleanly
       const cleanFromNumber = twilioPhoneNumber!.replace(/^whatsapp:/, '');
       const cleanToNumber = to.replace(/^whatsapp:/, '');
       const fromNumber = `whatsapp:${cleanFromNumber}`;
@@ -101,7 +115,7 @@ Deno.serve(async (req) => {
       return `${displayHour}:${minutes} ${ampm}`;
     }
 
-    // Check if within doctor hours (single continuous slot: start_time_morning to end_time_morning)
+    // Check if within doctor hours (single continuous slot)
     function isWithinDoctorHours(): { available: boolean; message: string; closingSoon: boolean } {
       if (!settings || !settings.is_active) {
         return { 
@@ -111,15 +125,11 @@ Deno.serve(async (req) => {
         };
       }
 
-      const now = new Date();
-      const currentTime = now.toTimeString().slice(0, 5); // HH:MM format
-
-      // Using single continuous slot from start_time_morning to end_time_morning
-      // Normalize DB times to HH:MM format (they come as HH:MM:SS)
+      const currentTime = getISTTimeString();
       const startTime = settings.start_time_morning.slice(0, 5);
       const endTime = settings.end_time_morning.slice(0, 5);
 
-      console.log(`Time check - Current: ${currentTime}, Start: ${startTime}, End: ${endTime}`);
+      console.log(`Time check (IST) - Current: ${currentTime}, Start: ${startTime}, End: ${endTime}`);
 
       const isWithinHours = currentTime >= startTime && currentTime <= endTime;
 
@@ -166,9 +176,42 @@ Deno.serve(async (req) => {
       return { hasToken: false };
     }
 
-    // Generate new token
-    async function generateToken(phone: string, name: string) {
-      // Get or create queue state
+    // Check if user is awaiting name entry (has a pending token request)
+    async function getPendingState(phone: string): Promise<"AWAITING_NAME" | null> {
+      // Check if the last token from this phone today was a "pending" placeholder
+      // We use a special convention: if they selected option 2 but haven't given name yet,
+      // we'll check for a recent message pattern
+      const { data } = await supabase
+        .from("tokens")
+        .select("*")
+        .eq("phone_number", phone)
+        .eq("queue_date", today)
+        .eq("status", "WAITING")
+        .eq("patient_name", "__PENDING__")
+        .limit(1);
+
+      if (data && data.length > 0) {
+        return "AWAITING_NAME";
+      }
+      return null;
+    }
+
+    // Create pending token (to track conversation state)
+    async function createPendingToken(phone: string) {
+      // First check if already exists
+      const { data: existing } = await supabase
+        .from("tokens")
+        .select("id")
+        .eq("phone_number", phone)
+        .eq("queue_date", today)
+        .eq("patient_name", "__PENDING__")
+        .limit(1);
+
+      if (existing && existing.length > 0) {
+        return; // Already has pending
+      }
+
+      // Get next token number
       let { data: queueState } = await supabase
         .from("queue_state")
         .select("*")
@@ -177,32 +220,16 @@ Deno.serve(async (req) => {
 
       const nextTokenNumber = (queueState?.total_tokens_today || 0) + 1;
 
-      // Count waiting tokens for wait time calculation
-      const { count } = await supabase
-        .from("tokens")
-        .select("*", { count: "exact", head: true })
-        .eq("queue_date", today)
-        .eq("status", "WAITING");
-
-      const waitingCount = count || 0;
-      const avgTime = settings?.avg_consultation_time || 7;
-      const estimatedWait = waitingCount * avgTime;
-
-      // Insert new token
-      const { data: newToken, error } = await supabase
+      await supabase
         .from("tokens")
         .insert({
           token_number: nextTokenNumber,
-          patient_name: name,
+          patient_name: "__PENDING__",
           phone_number: phone,
           status: "WAITING",
-          estimated_wait_time: estimatedWait,
+          estimated_wait_time: 0,
           queue_date: today,
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
+        });
 
       // Update queue state
       if (queueState) {
@@ -219,11 +246,52 @@ Deno.serve(async (req) => {
             total_tokens_today: nextTokenNumber,
           });
       }
-
-      return { tokenNumber: nextTokenNumber, estimatedWait };
     }
 
-    // Cancel token
+    // Complete pending token with actual name
+    async function completePendingToken(phone: string, name: string) {
+      // Get the pending token
+      const { data: pendingToken } = await supabase
+        .from("tokens")
+        .select("*")
+        .eq("phone_number", phone)
+        .eq("queue_date", today)
+        .eq("patient_name", "__PENDING__")
+        .single();
+
+      if (!pendingToken) {
+        throw new Error("No pending token found");
+      }
+
+      // Count waiting tokens for wait time calculation
+      const { count } = await supabase
+        .from("tokens")
+        .select("*", { count: "exact", head: true })
+        .eq("queue_date", today)
+        .eq("status", "WAITING")
+        .neq("patient_name", "__PENDING__");
+
+      const waitingCount = count || 0;
+      const avgTime = settings?.avg_consultation_time || 7;
+      const estimatedWait = waitingCount * avgTime;
+
+      // Update the pending token with actual name
+      const { data: updatedToken, error } = await supabase
+        .from("tokens")
+        .update({
+          patient_name: name,
+          estimated_wait_time: estimatedWait,
+        })
+        .eq("id", pendingToken.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return { tokenNumber: updatedToken.token_number, estimatedWait };
+    }
+
+    // Cancel token (including pending)
     async function cancelToken(phone: string): Promise<{ cancelled: boolean; tokenNumber?: number }> {
       const { data } = await supabase
         .from("tokens")
@@ -240,8 +308,8 @@ Deno.serve(async (req) => {
       return { cancelled: false };
     }
 
-    // Get conversation state
-    const state = conversations.get(patientPhone) || { step: "MENU", phone: patientPhone };
+    // Check conversation state from database
+    const pendingState = await getPendingState(patientPhone);
 
     let responseMessage = "";
 
@@ -253,20 +321,39 @@ Deno.serve(async (req) => {
       } else {
         responseMessage = "You don't have an active token to cancel.";
       }
-      conversations.delete(patientPhone);
     }
-    // Handle based on conversation state
-    else if (state.step === "AWAITING_NAME") {
-      // User is providing their name for token
-      const patientName = (formData.get("Body") as string || "").trim();
-      
-      if (patientName.length < 2) {
+    // Handle based on conversation state - user is providing their name
+    else if (pendingState === "AWAITING_NAME") {
+      // Don't treat menu options as names
+      if (body === "1" || body === "2" || body === "TIMINGS" || body === "TOKEN" || body === "GET TOKEN" || body === "DOCTOR TIMINGS") {
+        // User changed their mind, cancel pending and process menu option
+        await cancelToken(patientPhone);
+        
+        if (body === "1" || body === "TIMINGS" || body === "DOCTOR TIMINGS") {
+          if (settings) {
+            const openTime = formatTime(settings.start_time_morning.slice(0, 5));
+            const closeTime = formatTime(settings.end_time_morning.slice(0, 5));
+            responseMessage = `🕒 *Doctor Timings*\n\n📍 ${settings.clinic_name}\n\n${openTime} - ${closeTime}\n\n📋 Average consultation: ~${settings.avg_consultation_time} mins`;
+          } else {
+            responseMessage = "Doctor timings are not configured yet. Please contact the clinic.";
+          }
+        } else {
+          // Restart token flow
+          const hourCheck = isWithinDoctorHours();
+          if (!hourCheck.available) {
+            responseMessage = hourCheck.message;
+          } else {
+            responseMessage = "Please reply with your *name* to generate a token.";
+            await createPendingToken(patientPhone);
+          }
+        }
+      } else if (rawBody.length < 2) {
         responseMessage = "Please enter a valid name (at least 2 characters).";
       } else {
-        const { tokenNumber, estimatedWait } = await generateToken(patientPhone, patientName);
+        // User provided their name
+        const { tokenNumber, estimatedWait } = await completePendingToken(patientPhone, rawBody);
         
         responseMessage = `✅ *Token Generated!*\n\n🪪 Token No: *${tokenNumber}*\n⏳ Approx Waiting Time: *${estimatedWait} minutes*\n\nYou will be notified when your turn is near.\n\nType *CANCEL* to cancel your token.`;
-        conversations.delete(patientPhone);
       }
     }
     // Menu options
@@ -285,13 +372,21 @@ Deno.serve(async (req) => {
       if (!hourCheck.available) {
         responseMessage = hourCheck.message;
       } else {
-        // Check for existing token
-        const existingToken = await hasActiveToken(patientPhone);
-        if (existingToken.hasToken) {
-          responseMessage = `⚠️ You already have an active token (No: ${existingToken.tokenNumber}).\n\nType *CANCEL* to cancel it if you want a new one.`;
+        // Check for existing completed token (not pending)
+        const { data: existingToken } = await supabase
+          .from("tokens")
+          .select("token_number")
+          .eq("phone_number", patientPhone)
+          .eq("queue_date", today)
+          .in("status", ["WAITING", "RUNNING"])
+          .neq("patient_name", "__PENDING__")
+          .limit(1);
+
+        if (existingToken && existingToken.length > 0) {
+          responseMessage = `⚠️ You already have an active token (No: ${existingToken[0].token_number}).\n\nType *CANCEL* to cancel it if you want a new one.`;
         } else {
           responseMessage = "Please reply with your *name* to generate a token.";
-          conversations.set(patientPhone, { step: "AWAITING_NAME", phone: patientPhone });
+          await createPendingToken(patientPhone);
         }
       }
     }
