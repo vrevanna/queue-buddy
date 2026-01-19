@@ -44,6 +44,7 @@ export function useUpdateDoctorSettings() {
 
   return useMutation({
     mutationFn: async (updates: {
+      id: string;
       clinic_name?: string;
       start_time_morning?: string;
       end_time_morning?: string;
@@ -52,9 +53,11 @@ export function useUpdateDoctorSettings() {
       avg_consultation_time?: number;
       is_active?: boolean;
     }) => {
+      const { id, ...updateData } = updates;
       const { data, error } = await supabase
         .from('doctor_settings')
-        .update(updates)
+        .update(updateData)
+        .eq('id', id)
         .select()
         .single();
 
